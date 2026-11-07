@@ -30,4 +30,6 @@ if (WMS_PROXY_BASE.startsWith('https://')) {
 
 map.on('moveend',()=>{clearTimeout(renderTimer);renderTimer=setTimeout(render,90)});select.addEventListener('change',rebuildCctv);for(const id of ['showCctv','showPolice','showBells','showLights'])document.getElementById(id).addEventListener('change',render);
 Promise.allSettled([fetch('./cctv-data.json').then(r=>{if(!r.ok)throw Error('CCTV HTTP '+r.status);return r.json()}).then(d=>{cctv=d.rows||[];document.getElementById('date').textContent=d.date||'미상';for(const p of [...new Set(cctv.map(r=>r[2]).filter(Boolean))].sort()){const o=document.createElement('option');o.value=p;o.textContent=p;select.append(o)}rebuildCctv();}),fetch('./police-data.json').then(r=>r.json()).then(d=>{police=d;render();}),fetch('./bell-data.json').then(r=>r.json()).then(d=>{bells=d;bellIndex=clustered(bells,55);render();})]).then(results=>{const errors=results.filter(r=>r.status==='rejected');if(errors.length){status.className='err';status.textContent='일부 데이터 로드 실패: '+errors.map(r=>r.reason.message).join('; ')}else render();});
-</script></body></html>
+</script>
+<script src="./demonstrations-layer.js" defer></script>
+</body></html>
