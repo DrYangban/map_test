@@ -7,7 +7,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlencode
 
 import fitz
 import requests
@@ -41,12 +41,41 @@ def discover(session, max_posts=12):
 
 
 def attachments(session, board_id):
-    # Exact GET parameter shape confirmed by the user's successful Colab test.
-    params = {'View': '', 'uQ': '', 'pageST': 'SUBJECT', 'pageSV': '',
-              'imsi': 'imsi', 'page': '1', 'pageSC': 'SORT_ORDER',
-              'pageSO': 'DESC', 'dmlType': '', 'boardNo': board_id,
-              'returnUrl': BASE + ':443/user/nd54882.do'}
-    soup = BeautifulSoup(get(session, BOARD, params=params).content, 'html.parser')
+    """Mirror goBoardView(): ?View followed by actual document.frm fields."""
+    listing = BeautifulSoup(get(session, BOARD).content, 'html.parser')
+    form = listing.find('form', attrs={'name': 'frm'}) or listing.find('form', attrs={'id': 'frm'})
+    if form is None:
+        raise ValueError('document.frm not found on board page')
+
+    fields = []
+    excluded = {'satisfact_score', 'satisMenuCode', 'satisMenuTitle', 'satisMenuId'}
+    for element in form.find_all(['input', 'select', 'textarea']):
+        name = element.get('name')
+        if not name or name in excluded or element.has_attr('disabled'):
+            continue
+        if element.name == 'input':
+            kind = (element.get('type') or 'text').lower()
+            if kind in ('checkbox', 'radio') and not element.has_attr('checked'):
+                continue
+            if kind in ('submit', 'button', 'reset', 'image', 'file'):
+                continue
+            value = element.get('value', '')
+        elif element.name == 'select':
+            selected = element.find('option', selected=True) or element.find('option')
+            value = selected.get('value', selected.get_text(strip=True)) if selected else ''
+        else:
+            value = element.get_text()
+        if name == 'boardNo':
+            value = board_id
+        fields.append((name, value))
+    if not any(name == 'boardNo' for name, _ in fields):
+        raise ValueError('boardNo field missing in document.frm')
+
+    # The JS appends "?View" (without "=") before the fields.
+    url = BOARD + '?View&' + urlencode(fields)
+    print(f'[SMPA] Detail request: {url}', flush=True)
+    response = get(session, url)
+    soup = BeautifulSoup(response.content, 'html.parser')
     found = []
     for a in soup.find_all('a'):
         m = ATTACH_RE.search((a.get('onclick') or '') + ' ' + (a.get('href') or ''))
