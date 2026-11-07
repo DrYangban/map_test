@@ -3,6 +3,8 @@
 import argparse
 import datetime as dt
 import io
+import os
+import time
 import json
 import re
 import sys
@@ -133,6 +135,47 @@ def extract(pdf_bytes, board_id, title, attach_id):
     return events
 
 
+def add_english_translations(events, previous_path):
+    """Optional Google Cloud Translation v2; reuse prior translations, no key in repo."""
+    previous = {}
+    if previous_path.exists():
+        try:
+            old = json.loads(previous_path.read_text(encoding='utf-8'))
+            for event in old.get('events', []):
+                if event.get('location_en') and event.get('location_text'):
+                    previous[event['location_text']] = event['location_en']
+        except (ValueError, OSError, TypeError):
+            pass
+    key = os.environ.get('GOOGLE_TRANSLATE_API_KEY', '').strip()
+    cache = dict(previous)
+    issues = []
+    for event in events:
+        ko = event.get('location_text', '')
+        if not ko:
+            continue
+        if ko in cache:
+            event['location_en'] = cache[ko]
+            continue
+        if not key:
+            continue
+        try:
+            response = requests.post(
+                'https://translation.googleapis.com/language/translate/v2',
+                params={'key': key},
+                json={'q': ko, 'source': 'ko', 'target': 'en', 'format': 'text'},
+                timeout=20,
+            )
+            response.raise_for_status()
+            from html import unescape
+            translated = unescape(response.json()['data']['translations'][0]['translatedText']).strip()
+            if translated:
+                cache[ko] = translated
+                event['location_en'] = translated
+        except (requests.RequestException, KeyError, IndexError, TypeError, ValueError) as exc:
+            issues.append({'location_text': ko[:70], 'reason': type(exc).__name__})
+    return issues, bool(key)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--local-pdf', help='Validate parsing against a local PDF without network')
@@ -178,10 +221,14 @@ def main():
         start = now.date()
         end = start + dt.timedelta(days=args.lookahead_days)
         events = [e for e in events if start <= dt.date.fromisoformat(e['date']) <= end]
+    translation_issues, translation_enabled = add_english_translations(events, Path(args.output))
+    if translation_issues:
+        issues.extend({'translation': i} for i in translation_issues)
     payload = {'schema_version': 1, 'generated_at_kst': now.isoformat(timespec='seconds'),
                'source': 'Seoul Metropolitan Police Agency - Today’s Demonstrations',
                'source_url': BOARD, 'events': events, 'issues': issues,
-               'notice': 'Only major reported demonstrations. Not a safety score or complete list. Coordinates intentionally omitted.'}
+               'notice': 'Only major reported demonstrations. Not a safety score or complete list. Coordinates intentionally omitted.',
+               'translation_notice': ('English location descriptions are machine-translated; verify against Korean source.' if translation_enabled else 'English location translations unavailable; original Korean retained.')}
     Path(args.output).write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     print(f'Wrote {args.output}: {len(events)} events, {len(issues)} issues')
     for e in events[:8]:
