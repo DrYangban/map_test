@@ -58,16 +58,24 @@ Promise.allSettled([fetch('./cctv-data.json').then(r=>{if(!r.ok)throw Error('CCT
   function displayName(place){return place.name||place.place_name||place.address||place.address_name||'Unnamed place / 이름 없음';}
   function englishName(place){
     const name=displayName(place);
-    const stations={'양재역':'Yangjae Station','서울역':'Seoul Station','강남역':'Gangnam Station','시청역':'City Hall Station','홍대입구역':'Hongik Univ. Station','광화문역':'Gwanghwamun Station','명동역':'Myeong-dong Station','잠실역':'Jamsil Station','서울특별시청':'Seoul City Hall','경복궁':'Gyeongbokgung Palace'};
+    const stations={'사당역':'Sadang Station','성수역':'Seongsu Station','양재역':'Yangjae Station','서울역':'Seoul Station','강남역':'Gangnam Station','시청역':'City Hall Station','홍대입구역':'Hongik Univ. Station','광화문역':'Gwanghwamun Station','명동역':'Myeong-dong Station','잠실역':'Jamsil Station','서울특별시청':'Seoul City Hall','경복궁':'Gyeongbokgung Palace'};
     const match=Object.keys(stations).find(k=>name===k||name.startsWith(k+' '));
     if(!match)return '';
     const suffix=name.slice(match.length).trim();
-    return stations[match]+(suffix==='3호선'?' (Line 3)':suffix==='신분당선'?' (Shinbundang Line)':suffix?` (${suffix})`:'');
+    return stations[match]+(/^\d+호선$/.test(suffix)?' (Line '+suffix.replace('호선','')+')':suffix==='신분당선'?' (Shinbundang Line)':suffix?` (${suffix})`:'');
   }
   function bilingualName(place){const ko=displayName(place),en=englishName(place);return en?en+' / '+ko:ko;}
   function displayAddress(place){return place.address||place.address_name||place.road_address_name||'';}
   // Only compare road-name addresses. Never infer a translation from a nearby result.
-  function roadAddress(place){return (place.road_address_name||place.roadAddress||'').trim();}
+  function roadAddress(place){
+    const candidate=String(place.road_address_name||place.roadAddress||place.address||'').trim();
+    // Worker normalizes Kakao's road-name address into `address`.
+    // Require a Seoul road/street suffix and building number; reject lot-number-only addresses.
+    if(!/^서울(?:특별시)?\s/.test(candidate))return '';
+    if(!/(?:대로|로|길)(?:\s|\d)/.test(candidate))return '';
+    if(!/\d+(?:-\d+)?\s*$/.test(candidate))return '';
+    return candidate;
+  }
   function normalizeRoadAddress(value){
     return String(value||'').normalize('NFKC')
       .replace(/서울특별시/g,'서울').replace(/\s+/g,'').replace(/[,()]/g,'')
