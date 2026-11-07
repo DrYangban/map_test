@@ -1,6 +1,19 @@
 <!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>서울 숙소 주변 안전시설 지도</title><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"><style>
 *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,'Malgun Gothic',sans-serif;color:#192337}header{padding:12px 16px;background:white;display:flex;align-items:center;gap:12px;justify-content:space-between;flex-wrap:wrap;border-bottom:1px solid #ddd}h1{font-size:20px;margin:0}small{color:#526075}#tools{display:flex;gap:9px;align-items:center;flex-wrap:wrap}select,input,button{padding:7px;border:1px solid #a9b2c0;border-radius:6px;background:white}label{white-space:nowrap}#map{height:calc(100dvh - 170px);min-height:410px}footer{padding:8px 15px;font-size:12px;color:#526075;line-height:1.6}.cluster{background:#1866bd;border:3px solid white;border-radius:50%;color:white;text-align:center;font-weight:700;box-shadow:0 1px 6px #0005;display:flex;align-items:center;justify-content:center}.leaflet-popup-content{line-height:1.6;min-width:180px}.layers{display:flex;gap:12px;flex-wrap:wrap;padding:7px 16px;background:#f4f7fb;border-bottom:1px solid #d8e0ea;font-size:14px}.layers label{display:flex;gap:5px;align-items:center}.layers input{accent-color:#1768b6}.wms-help{font-size:12px;color:#5c6775}.err{color:#b91c1c}@media(max-width:700px){#map{height:calc(100dvh - 240px)}h1{font-size:17px}}
-</style></head><body><header><div><h1>서울 숙소 주변 안전시설 지도</h1><small>Seoul accommodation safety infrastructure map · 시설 분포는 실제 안전도를 의미하지 않습니다</small></div><div id="tools"><label for="purpose">CCTV 설치 목적</label><select id="purpose"><option value="">전체</option></select><span id="status" aria-live="polite">데이터 로딩 중…</span></div></header><div class="layers"><label><input id="showCctv" type="checkbox" checked>CCTV</label><label><input id="showPolice" type="checkbox" checked>경찰서·지구대·파출소</label><label><input id="showBells" type="checkbox">안전비상벨</label><label><input id="showLights" type="checkbox">보안등(WMS, 확대 15+)</label><span class="wms-help" id="wmsStatus">보안등 중계 서버 연결</span></div><div id="map" role="application" aria-label="서울 안전시설 지도"></div><footer>지도 © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap 기여자</a> · CCTV: 서울특별시 공공데이터 (기준일 <span id="date">확인 중</span>) · 경찰 시설·안전비상벨·보안등: <a href="https://www.safemap.go.kr/main/smap_renewal.do" target="_blank" rel="noopener">행정안전부 생활안전지도</a> (공공누리 제4유형: 출처표시·비상업적 이용·변경 금지). 보안등은 원본 WMS 레이어를 표시합니다. 데이터 기준일과 시설 작동 상태는 다를 수 있으며, 설치 수가 안전을 보장하지 않습니다.</footer><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script src="https://unpkg.com/supercluster@8.0.1/dist/supercluster.min.js"></script><script>
+
+/* Place search: independent of existing map layers */
+.place-search{position:relative;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.place-search input{width:min(300px,65vw);font-size:14px}
+.place-search button{cursor:pointer}
+.search-results{position:absolute;right:0;top:calc(100% + 7px);width:min(420px,92vw);max-height:320px;overflow:auto;background:#fff;border:1px solid #b6c3d2;border-radius:8px;box-shadow:0 6px 22px #19233735;z-index:1100}
+.search-results[hidden]{display:none}
+.search-results button{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid #e6ebf1;border-radius:0;padding:10px 12px;background:#fff;white-space:normal}
+.search-results button:hover,.search-results button:focus{background:#eef5ff}
+.search-results .place-name{display:block;font-weight:700}
+.search-results .place-address{display:block;color:#526075;font-size:12px;margin-top:2px}
+.search-message{padding:11px 12px;font-size:13px;color:#526075}
+@media(max-width:700px){.place-search{width:100%}.place-search input{flex:1;width:0}.search-results{left:0;right:auto;width:100%}}
+</style></head><body><header><div><h1>서울 숙소 주변 안전시설 지도</h1><small>Seoul accommodation safety infrastructure map · 시설 분포는 실제 안전도를 의미하지 않습니다</small></div><div id="tools"><form class="place-search" id="placeSearch" role="search" autocomplete="off"><label for="placeQuery">장소 검색</label><input id="placeQuery" type="search" maxlength="100" placeholder="Hotel, address, 서울시청…" aria-label="한국어 또는 영어로 서울 장소 검색"><button type="submit" id="placeSearchButton">검색</button><div class="search-results" id="placeResults" role="region" aria-label="장소 검색 결과" aria-live="polite" hidden></div></form><label for="purpose">CCTV 설치 목적</label><select id="purpose"><option value="">전체</option></select><span id="status" aria-live="polite">데이터 로딩 중…</span></div></header><div class="layers"><label><input id="showCctv" type="checkbox" checked>CCTV</label><label><input id="showPolice" type="checkbox" checked>경찰서·지구대·파출소</label><label><input id="showBells" type="checkbox">안전비상벨</label><label><input id="showLights" type="checkbox">보안등(WMS, 확대 15+)</label><span class="wms-help" id="wmsStatus">보안등 중계 서버 연결</span></div><div id="map" role="application" aria-label="서울 안전시설 지도"></div><footer>지도 © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap 기여자</a> · CCTV: 서울특별시 공공데이터 (기준일 <span id="date">확인 중</span>) · 경찰 시설·안전비상벨·보안등: <a href="https://www.safemap.go.kr/main/smap_renewal.do" target="_blank" rel="noopener">행정안전부 생활안전지도</a> (공공누리 제4유형: 출처표시·비상업적 이용·변경 금지). 보안등은 원본 WMS 레이어를 표시합니다. 데이터 기준일과 시설 작동 상태는 다를 수 있으며, 설치 수가 안전을 보장하지 않습니다.</footer><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script src="https://unpkg.com/supercluster@8.0.1/dist/supercluster.min.js"></script><script>
 const map=L.map('map',{preferCanvas:true}).setView([37.5665,126.978],11);
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
 const cctvLayer=L.layerGroup().addTo(map),policeLayer=L.layerGroup().addTo(map),bellLayer=L.layerGroup().addTo(map);
@@ -30,6 +43,70 @@ if (WMS_PROXY_BASE.startsWith('https://')) {
 
 map.on('moveend',()=>{clearTimeout(renderTimer);renderTimer=setTimeout(render,90)});select.addEventListener('change',rebuildCctv);for(const id of ['showCctv','showPolice','showBells','showLights'])document.getElementById(id).addEventListener('change',render);
 Promise.allSettled([fetch('./cctv-data.json').then(r=>{if(!r.ok)throw Error('CCTV HTTP '+r.status);return r.json()}).then(d=>{cctv=d.rows||[];document.getElementById('date').textContent=d.date||'미상';for(const p of [...new Set(cctv.map(r=>r[2]).filter(Boolean))].sort()){const o=document.createElement('option');o.value=p;o.textContent=p;select.append(o)}rebuildCctv();}),fetch('./police-data.json').then(r=>r.json()).then(d=>{police=d;render();}),fetch('./bell-data.json').then(r=>r.json()).then(d=>{bells=d;bellIndex=clustered(bells,55);render();})]).then(results=>{const errors=results.filter(r=>r.status==='rejected');if(errors.length){status.className='err';status.textContent='일부 데이터 로드 실패: '+errors.map(r=>r.reason.message).join('; ')}else render();});
+
+// Search through the existing Cloudflare Worker. Never place Kakao REST keys in this file.
+(function initPlaceSearch(){
+  const form=document.getElementById('placeSearch');
+  const input=document.getElementById('placeQuery');
+  const results=document.getElementById('placeResults');
+  const button=document.getElementById('placeSearchButton');
+  const searchLayer=L.layerGroup().addTo(map);
+  let controller=null;
+  let searchSequence=0;
+  function message(text){results.replaceChildren();const p=document.createElement('div');p.className='search-message';p.textContent=text;results.append(p);results.hidden=false;}
+  function hideResults(){results.hidden=true;}
+  function displayName(place){return place.name||place.place_name||place.address||place.address_name||'이름 없는 장소';}
+  function displayAddress(place){return place.address||place.address_name||place.road_address_name||'';}
+  function selectPlace(place){
+    const lat=Number(place.latitude??place.y),lon=Number(place.longitude??place.x);
+    if(!Number.isFinite(lat)||!Number.isFinite(lon)||Math.abs(lat)>90||Math.abs(lon)>180){message('이 장소의 좌표를 확인할 수 없습니다.');return;}
+    searchLayer.clearLayers();
+    const marker=L.marker([lat,lon]).addTo(searchLayer);
+    const content=document.createElement('div');
+    const title=document.createElement('strong');title.textContent=displayName(place);content.append(title);
+    const addr=displayAddress(place);
+    if(addr){const line=document.createElement('div');line.textContent=addr;content.append(line);}
+    marker.bindPopup(content).openPopup();
+    map.flyTo([lat,lon],Math.max(map.getZoom(),16),{duration:0.8});
+    hideResults();
+  }
+  form.addEventListener('submit',async event=>{
+    event.preventDefault();
+    const query=input.value.trim();
+    if(!query){message('검색어를 입력해 주세요.');return;}
+    if(controller)controller.abort();
+    controller=new AbortController();
+    const sequence=++searchSequence;
+    button.disabled=true;
+    message('검색 중…');
+    try{
+      // Search place names first; fall back to addresses when no place matches.
+      const search=async type=>{
+        const url=WMS_PROXY_BASE+'/search?type='+type+'&q='+encodeURIComponent(query);
+        const response=await fetch(url,{signal:controller.signal});
+        if(!response.ok)throw Error('HTTP '+response.status);
+        return response.json();
+      };
+      let payload=await search('keyword');
+      let places=Array.isArray(payload.results)?payload.results:[];
+      if(!places.length){payload=await search('address');places=Array.isArray(payload.results)?payload.results:[];}
+      if(sequence!==searchSequence)return;
+      results.replaceChildren();
+      if(!places.length){message('검색 결과가 없습니다. 다른 이름이나 주소로 검색해 보세요.');return;}
+      for(const place of places){
+        const item=document.createElement('button');item.type='button';
+        const name=document.createElement('span');name.className='place-name';name.textContent=displayName(place);
+        const address=document.createElement('span');address.className='place-address';address.textContent=displayAddress(place);
+        item.append(name,address);item.addEventListener('click',()=>selectPlace(place));results.append(item);
+      }
+      results.hidden=false;
+    }catch(error){if(error.name!=='AbortError'&&sequence===searchSequence)message('검색에 실패했습니다. 잠시 후 다시 시도해 주세요.');}
+    finally{if(sequence===searchSequence)button.disabled=false;}
+  });
+  document.addEventListener('pointerdown',event=>{if(!form.contains(event.target))hideResults();});
+  input.addEventListener('focus',()=>{if(results.childElementCount)results.hidden=false;});
+  input.addEventListener('keydown',event=>{if(event.key==='Escape')hideResults();});
+})();
 </script>
 <script src="./demonstrations-layer.js" defer></script>
 </body></html>
