@@ -66,28 +66,60 @@ Promise.allSettled([fetch('./cctv-data.json').then(r=>{if(!r.ok)throw Error('CCT
   }
   function bilingualName(place){const ko=displayName(place),en=englishName(place);return en?en+' / '+ko:ko;}
   function displayAddress(place){return place.address||place.address_name||place.road_address_name||'';}
-  function selectPlace(place){
+  // Only compare road-name addresses. Never infer a translation from a nearby result.
+  function roadAddress(place){return (place.road_address_name||place.roadAddress||'').trim();}
+  function normalizeRoadAddress(value){
+    return String(value||'').normalize('NFKC')
+      .replace(/서울특별시/g,'서울').replace(/\s+/g,'').replace(/[,()]/g,'')
+      .trim();
+  }
+  function matchingEnglishAddress(place, rows){
+    const road=roadAddress(place);
+    if(!road)return '';
+    const normalized=normalizeRoadAddress(road);
+    const matches=(Array.isArray(rows)?rows:[]).filter(row=>
+      normalizeRoadAddress(row.koreanRoadAddress)===normalized && row.englishRoadAddress);
+    return matches.length===1?matches[0].englishRoadAddress:'';
+  }
+  let selectionSequence=0;
+  async function selectPlace(place){
     const lat=Number(place.latitude??place.y),lon=Number(place.longitude??place.x);
     if(!Number.isFinite(lat)||!Number.isFinite(lon)||Math.abs(lat)>90||Math.abs(lon)>180){message('Location coordinates unavailable / 좌표 없음');return;}
+    const selection=++selectionSequence;
     searchLayer.clearLayers();
     const marker=L.marker([lat,lon]).addTo(searchLayer);
     const content=document.createElement('div');
     const title=document.createElement('strong');title.textContent=bilingualName(place);content.append(title);
+    const englishLine=document.createElement('div');englishLine.textContent='Checking official English address… / 영문주소 확인 중…';
     const addr=displayAddress(place);
-    if(addr){const line=document.createElement('div');line.textContent=addr;content.append(line);}
+    const koreanLine=document.createElement('div');koreanLine.textContent=addr;
+    if(roadAddress(place))content.append(englishLine);
+    if(addr)content.append(koreanLine);
     marker.bindPopup(content).openPopup();
     map.flyTo([lat,lon],Math.max(map.getZoom(),16),{duration:0.8});
     hideResults();
+    const road=roadAddress(place);
+    if(!road)return;
+    try{
+      const response=await fetch(WMS_PROXY_BASE+'/juso?q='+encodeURIComponent(road));
+      if(!response.ok)throw new Error('JUSO HTTP '+response.status);
+      const payload=await response.json();
+      if(selection!==selectionSequence)return;
+      const english=matchingEnglishAddress(place,payload.results);
+      englishLine.textContent=english||'Official English address unavailable / 영문주소 확인 불가';
+    }catch(error){
+      if(selection===selectionSequence)englishLine.textContent='English address lookup unavailable / 영문주소 조회 실패';
+    }
   }
   form.addEventListener('submit',async event=>{
     event.preventDefault();
     const query=input.value.trim();
-    if(!query){message('Search어를 입력해 주세요.');return;}
+    if(!query){message('Enter a place or address / 장소나 주소를 입력하세요');return;}
     if(controller)controller.abort();
     controller=new AbortController();
     const sequence=++searchSequence;
     button.disabled=true;
-    message('Search 중…');
+    message('Searching… / 검색 중…');
     try{
       // Search place names first; fall back to addresses when no place matches.
       const search=async type=>{
@@ -101,7 +133,7 @@ Promise.allSettled([fetch('./cctv-data.json').then(r=>{if(!r.ok)throw Error('CCT
       if(!places.length){payload=await search('address');places=Array.isArray(payload.results)?payload.results:[];}
       if(sequence!==searchSequence)return;
       results.replaceChildren();
-      if(!places.length){message('Search 결과가 없습니다. 다른 이름이나 주소로 Search해 보세요.');return;}
+      if(!places.length){message('No results. Try another name or address / 검색 결과가 없습니다');return;}
       for(const place of places){
         const item=document.createElement('button');item.type='button';
         const name=document.createElement('span');name.className='place-name';name.textContent=bilingualName(place);
@@ -109,7 +141,7 @@ Promise.allSettled([fetch('./cctv-data.json').then(r=>{if(!r.ok)throw Error('CCT
         item.append(name,address);item.addEventListener('click',()=>selectPlace(place));results.append(item);
       }
       results.hidden=false;
-    }catch(error){if(error.name!=='AbortError'&&sequence===searchSequence)message('Search에 실패했습니다. 잠시 후 다시 시도해 주세요.');}
+    }catch(error){if(error.name!=='AbortError'&&sequence===searchSequence)message('Search failed. Please try again / 검색 실패. 다시 시도해 주세요');}
     finally{if(sequence===searchSequence)button.disabled=false;}
   });
   document.addEventListener('pointerdown',event=>{if(!form.contains(event.target))hideResults();});
