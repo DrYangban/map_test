@@ -1,0 +1,29 @@
+name: Update Seoul demonstration notices
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '15 0,6,12 * * *' # UTC 00:15/06:15/12:15 = KST 09:15/15:15/21:15
+permissions:
+  contents: write
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Collect and parse official PDF notices
+        run: python collect_smpa.py --output demonstrations.json
+      - name: Commit changed JSON
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add demonstrations.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Update SMPA demonstration notices"
+            git push
+          fi
