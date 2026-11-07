@@ -5,7 +5,7 @@
 .place-search{position:relative;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .place-search input{width:min(300px,65vw);font-size:14px}
 .place-search button{cursor:pointer}
-.search-results{position:absolute;right:0;top:calc(100% + 7px);width:min(420px,92vw);max-height:320px;overflow:auto;background:#fff;border:1px solid #b6c3d2;border-radius:8px;box-shadow:0 6px 22px #19233735;z-index:1100}
+.search-results{position:absolute;right:0;top:calc(100% + 7px);width:min(420px,92vw);max-height:400px;overflow:auto;background:#fff;border:1px solid #b6c3d2;border-radius:8px;box-shadow:0 6px 22px #19233735;z-index:1100}
 .search-results[hidden]{display:none}
 .search-results button{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid #e6ebf1;border-radius:0;padding:10px 12px;background:#fff;white-space:normal}
 .search-results button:hover,.search-results button:focus{background:#eef5ff}
@@ -58,36 +58,62 @@ Promise.allSettled([fetch('./cctv-data.json').then(r=>{if(!r.ok)throw Error('CCT
   function displayName(place){return place.name||place.place_name||place.address||place.address_name||'Unnamed place / 이름 없음';}
   function englishName(place){
     const name=displayName(place);
-    const stations={'사당역':'Sadang Station','성수역':'Seongsu Station','양재역':'Yangjae Station','서울역':'Seoul Station','강남역':'Gangnam Station','시청역':'City Hall Station','홍대입구역':'Hongik Univ. Station','광화문역':'Gwanghwamun Station','명동역':'Myeong-dong Station','잠실역':'Jamsil Station','서울특별시청':'Seoul City Hall','경복궁':'Gyeongbokgung Palace'};
-    const match=Object.keys(stations).find(k=>name===k||name.startsWith(k+' '));
+    const names={'사당역':'Sadang Station','성수역':'Seongsu Station','양재역':'Yangjae Station','서울역':'Seoul Station','강남역':'Gangnam Station','시청역':'City Hall Station','홍대입구역':'Hongik Univ. Station','광화문역':'Gwanghwamun Station','명동역':'Myeong-dong Station','잠실역':'Jamsil Station','서울특별시청':'Seoul City Hall','경복궁':'Gyeongbokgung Palace','안국역':'Anguk Station','종각역':'Jonggak Station','을지로입구역':'Euljiro 1-ga Station','신촌역':'Sinchon Station','고속터미널역':'Express Bus Terminal Station','동대문역':'Dongdaemun Station','합정역':'Hapjeong Station','여의도역':'Yeouido Station','삼성역':'Samseong Station','교대역':'Seoul Nat’l Univ. of Education Station','왕십리역':'Wangsimni Station'};
+    const match=Object.keys(names).find(k=>name===k||name.startsWith(k+' '));
     if(!match)return '';
     const suffix=name.slice(match.length).trim();
-    return stations[match]+(/^\d+호선$/.test(suffix)?' (Line '+suffix.replace('호선','')+')':suffix==='신분당선'?' (Shinbundang Line)':suffix?` (${suffix})`:'');
+    if(!suffix)return names[match];
+    if(/^\d+호선$/.test(suffix))return names[match]+' (Line '+suffix.replace('호선','')+')';
+    if(suffix==='신분당선')return names[match]+' (Shinbundang Line)';
+    return ''; // Never present unverified Korean suffixes as English.
   }
-  function bilingualName(place){const ko=displayName(place),en=englishName(place);return en?en+' / '+ko:ko;}
   function displayAddress(place){return place.address||place.address_name||place.road_address_name||'';}
-  // Only compare road-name addresses. Never infer a translation from a nearby result.
   function roadAddress(place){
     const candidate=String(place.road_address_name||place.roadAddress||place.address||'').trim();
-    // Worker normalizes Kakao's road-name address into `address`.
-    // Require a Seoul road/street suffix and building number; reject lot-number-only addresses.
     if(!/^서울(?:특별시)?\s/.test(candidate))return '';
     if(!/(?:대로|로|길)(?:\s|\d)/.test(candidate))return '';
     if(!/\d+(?:-\d+)?\s*$/.test(candidate))return '';
     return candidate;
   }
-  function normalizeRoadAddress(value){
-    return String(value||'').normalize('NFKC')
-      .replace(/서울특별시/g,'서울').replace(/\s+/g,'').replace(/[,()]/g,'')
-      .trim();
+  function normalizeAddress(value, stripUnderground=false){
+    let s=String(value||'').normalize('NFKC').replace(/서울특별시/g,'서울')
+      .replace(/[(),]/g,'').replace(/\s+/g,'');
+    if(stripUnderground)s=s.replace(/(대로|로|길)지하(?=\d)/g,'$1');
+    return s;
   }
-  function matchingEnglishAddress(place, rows){
+  function matchingEnglishAddress(place,rows){
     const road=roadAddress(place);
-    if(!road)return '';
-    const normalized=normalizeRoadAddress(road);
-    const matches=(Array.isArray(rows)?rows:[]).filter(row=>
-      normalizeRoadAddress(row.koreanRoadAddress)===normalized && row.englishRoadAddress);
-    return matches.length===1?matches[0].englishRoadAddress:'';
+    if(!road||!Array.isArray(rows))return '';
+    const target=normalizeAddress(road);
+    const exact=rows.filter(r=>r.englishRoadAddress&&normalizeAddress(r.koreanRoadAddress)===target);
+    if(exact.length===1)return exact[0].englishRoadAddress;
+    if(exact.length>1)return '';
+    // Subway road addresses sometimes include '지하', whereas Juso omits it.
+    // Only accept one unique match with identical street, number and district.
+    const relaxed=rows.filter(r=>r.englishRoadAddress&&normalizeAddress(r.koreanRoadAddress,true)===normalizeAddress(road,true));
+    return relaxed.length===1?relaxed[0].englishRoadAddress:'';
+  }
+  const addressCache=new Map();
+  const addressLookup=new Map();
+  function getEnglishAddress(place){
+    const road=roadAddress(place);
+    if(!road)return Promise.resolve('');
+    const key=normalizeAddress(road);
+    if(addressCache.has(key))return Promise.resolve(addressCache.get(key));
+    if(addressLookup.has(key))return addressLookup.get(key);
+    const promise=(async()=>{
+      try{
+        const response=await fetch(WMS_PROXY_BASE+'/juso?q='+encodeURIComponent(road));
+        if(!response.ok)throw Error('JUSO HTTP '+response.status);
+        const payload=await response.json();
+        const english=matchingEnglishAddress(place,payload.results);
+        addressCache.set(key,english);
+        return english;
+      }catch(error){console.warn('English address lookup failed:',error);return '';}
+      finally{addressLookup.delete(key);}
+    })();
+    addressLookup.set(key,promise);
+    return promise;
   }
   let selectionSequence=0;
   async function selectPlace(place){
@@ -97,27 +123,35 @@ Promise.allSettled([fetch('./cctv-data.json').then(r=>{if(!r.ok)throw Error('CCT
     searchLayer.clearLayers();
     const marker=L.marker([lat,lon]).addTo(searchLayer);
     const content=document.createElement('div');
-    const title=document.createElement('strong');title.textContent=bilingualName(place);content.append(title);
-    const englishLine=document.createElement('div');englishLine.textContent='Checking official English address… / 영문주소 확인 중…';
+    const en=englishName(place),ko=displayName(place);
+    if(en){const title=document.createElement('strong');title.textContent=en;content.append(title);const koName=document.createElement('div');koName.textContent=ko;content.append(koName);}
+    else{const title=document.createElement('strong');title.textContent=ko;content.append(title);}
+    const englishLine=document.createElement('div');
+    if(roadAddress(place)){englishLine.textContent='Checking English address… / 영문주소 확인 중…';content.append(englishLine);}
     const addr=displayAddress(place);
-    const koreanLine=document.createElement('div');koreanLine.textContent=addr;
-    if(roadAddress(place))content.append(englishLine);
-    if(addr)content.append(koreanLine);
+    if(addr){const koreanLine=document.createElement('div');koreanLine.textContent=addr;content.append(koreanLine);}
     marker.bindPopup(content).openPopup();
     map.flyTo([lat,lon],Math.max(map.getZoom(),16),{duration:0.8});
     hideResults();
-    const road=roadAddress(place);
-    if(!road)return;
-    try{
-      const response=await fetch(WMS_PROXY_BASE+'/juso?q='+encodeURIComponent(road));
-      if(!response.ok)throw new Error('JUSO HTTP '+response.status);
-      const payload=await response.json();
-      if(selection!==selectionSequence)return;
-      const english=matchingEnglishAddress(place,payload.results);
-      englishLine.textContent=english||'Official English address unavailable / 영문주소 확인 불가';
-    }catch(error){
-      if(selection===selectionSequence)englishLine.textContent='English address lookup unavailable / 영문주소 조회 실패';
+    if(!roadAddress(place))return;
+    const english=await getEnglishAddress(place);
+    if(selection!==selectionSequence)return;
+    englishLine.textContent=english||'Official English address unavailable / 공식 영문주소 확인 불가';
+  }
+  // Fetch at most three official-address lookups concurrently; reuse results for popups.
+  async function enrichResults(places,entries,sequence){
+    let next=0;
+    async function worker(){
+      while(next<places.length){
+        const i=next++;
+        const place=places[i],line=entries[i];
+        if(!roadAddress(place))continue;
+        const english=await getEnglishAddress(place);
+        if(sequence!==searchSequence||!line.isConnected)return;
+        line.textContent=english||'Official English address unavailable / 공식 영문주소 확인 불가';
+      }
     }
+    await Promise.all(Array.from({length:Math.min(3,places.length)},worker));
   }
   form.addEventListener('submit',async event=>{
     event.preventDefault();
@@ -129,7 +163,6 @@ Promise.allSettled([fetch('./cctv-data.json').then(r=>{if(!r.ok)throw Error('CCT
     button.disabled=true;
     message('Searching… / 검색 중…');
     try{
-      // Search place names first; fall back to addresses when no place matches.
       const search=async type=>{
         const url=WMS_PROXY_BASE+'/search?type='+type+'&q='+encodeURIComponent(query);
         const response=await fetch(url,{signal:controller.signal});
@@ -141,15 +174,24 @@ Promise.allSettled([fetch('./cctv-data.json').then(r=>{if(!r.ok)throw Error('CCT
       if(!places.length){payload=await search('address');places=Array.isArray(payload.results)?payload.results:[];}
       if(sequence!==searchSequence)return;
       results.replaceChildren();
-      if(!places.length){message('No results. Try another name or address / 검색 결과가 없습니다');return;}
+      if(!places.length){message('No results / 검색 결과가 없습니다');return;}
+      const lines=[];
       for(const place of places){
         const item=document.createElement('button');item.type='button';
-        const name=document.createElement('span');name.className='place-name';name.textContent=bilingualName(place);
+        const en=englishName(place);
+        const name=document.createElement('span');name.className='place-name';name.textContent=en||displayName(place);
+        item.append(name);
+        if(en){const ko=document.createElement('span');ko.className='place-address';ko.textContent=displayName(place);item.append(ko);}
+        const englishLine=document.createElement('span');englishLine.className='place-address';
+        englishLine.textContent=roadAddress(place)?'Checking official English address… / 영문주소 조회 중…':'';
+        if(roadAddress(place))item.append(englishLine);
         const address=document.createElement('span');address.className='place-address';address.textContent=displayAddress(place);
-        item.append(name,address);item.addEventListener('click',()=>selectPlace(place));results.append(item);
+        item.append(address);item.addEventListener('click',()=>selectPlace(place));results.append(item);
+        lines.push(englishLine);
       }
       results.hidden=false;
-    }catch(error){if(error.name!=='AbortError'&&sequence===searchSequence)message('Search failed. Please try again / 검색 실패. 다시 시도해 주세요');}
+      void enrichResults(places,lines,sequence);
+    }catch(error){if(error.name!=='AbortError'&&sequence===searchSequence)message('Search failed / 검색 실패');}
     finally{if(sequence===searchSequence)button.disabled=false;}
   });
   document.addEventListener('pointerdown',event=>{if(!form.contains(event.target))hideResults();});
