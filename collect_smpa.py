@@ -119,21 +119,29 @@ def main():
         session = requests.Session()
         session.headers.update({'User-Agent': 'SeoulTravelSafetyMap/0.1 (public data research)', 'Referer': BOARD})
         posts = discover(session, args.max_posts)
+        print(f'[SMPA] Discovered {len(posts)} board posts', flush=True)
         if not posts:
             raise RuntimeError('no SMPA board posts discovered; refusing to overwrite existing data')
         for post in posts:
+            print(f"[SMPA] Checking {post['board_id']}: {post['title']}", flush=True)
             try:
-                pdfs = [a for a in attachments(session, post['board_id']) if a['name'].lower().endswith('.pdf')]
+                found = attachments(session, post['board_id'])
+                print(f"[SMPA] Attachments: {[(a['name'], a['attach_id']) for a in found]}", flush=True)
+                pdfs = [a for a in found if a['name'].lower().endswith('.pdf')]
                 if not pdfs:
                     issues.append({'board_id': post['board_id'], 'reason': 'no PDF attachment'})
                     continue
-                # Most notices have one PDF; avoid accidental duplicates.
                 for pdf in pdfs[:1]:
-                    events.extend(extract(download_pdf(session, pdf['attach_id']),
-                                          post['board_id'], post['title'], pdf['attach_id']))
+                    pdf_bytes = download_pdf(session, pdf['attach_id'])
+                    print(f"[SMPA] Downloaded PDF {pdf['attach_id']}: {len(pdf_bytes)} bytes", flush=True)
+                    parsed = extract(pdf_bytes, post['board_id'], post['title'], pdf['attach_id'])
+                    print(f"[SMPA] Parsed {len(parsed)} events", flush=True)
+                    events.extend(parsed)
             except Exception as exc:
+                print(f"[SMPA] ERROR {post['board_id']}: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
                 issues.append({'board_id': post['board_id'], 'reason': str(exc)[:200]})
         if not events:
+            print('[SMPA] All collection failures:', json.dumps(issues, ensure_ascii=False, indent=2), file=sys.stderr, flush=True)
             raise RuntimeError('no valid events extracted; refusing to overwrite existing data')
     dedup = {(e['date'], e['start_time'], e['location_text'], e['source_board_id']): e for e in events}
     events = sorted(dedup.values(), key=lambda e: (e['date'], e['start_time'], e['location_text']))
